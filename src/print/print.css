@@ -1,0 +1,350 @@
+/* ============================================================
+ * 印刷台 · 报告版面样式
+ * 预览 / window.print / 导出的独立 HTML 共用这一套类，
+ * 保证 DOM 测量分页与最终渲染完全一致。
+ * 单位约定：页面用 mm（A4），版心内一律 px（1in = 96px）。
+ * ============================================================ */
+
+.rps-paper {
+  position: relative;
+  background: #FBF7EE;
+  color: #3A2F25;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", "STSong", serif;
+  overflow: hidden;
+  box-shadow: 0 12px 44px rgba(42, 33, 24, 0.28), 0 2px 10px rgba(42, 33, 24, 0.12);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 离屏测量容器：定位到屏幕外，不可见但可测量 offsetHeight。
+ * 必须与 .rps-paper 保持同一字体族 / 字号 / 行高基线，否则离线测量的
+ * 行高会与纸张内实际渲染不一致而造成分页误差。 */
+.rps-measure {
+  position: absolute;
+  top: 0;
+  left: -99999px;
+  visibility: hidden;
+  pointer-events: none;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", "STSong", serif;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: #3A2F25;
+}
+
+/* ---- 页眉 / 页脚（位置由 JS 按测量出的版心写入） ---- */
+.rps-running {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: #734823;
+  border-bottom: 1px solid #E0D1B3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+}
+.rps-running .rps-running-mark {
+  color: #B8894F;
+  margin-right: 8px;
+  letter-spacing: 0;
+}
+.rps-foot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: #8A7A63;
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid #EDE3CC;
+}
+.rps-foot .rps-foot-total { color: #B3A384; }
+
+/* ---- 版心 ---- */
+.rps-content {
+  position: absolute;
+}
+
+/* ---- 封面 ---- */
+.rps-cover {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 26%;
+}
+.rps-cover-kicker {
+  font-size: 11px;
+  letter-spacing: 8px;
+  color: #B8894F;
+  margin-bottom: 26px;
+  padding-left: 8px;
+}
+.rps-cover-title {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #2A2118;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 0 8px;
+}
+.rps-cover-rule {
+  width: 120px;
+  height: 2px;
+  margin: 30px auto 26px;
+  background: linear-gradient(90deg, transparent, #B8894F, transparent);
+}
+.rps-cover-meta {
+  font-size: 13px;
+  color: #6F5F4C;
+  line-height: 2.1;
+  overflow-wrap: anywhere;
+}
+.rps-cover-seal {
+  margin-top: 40px;
+  font-size: 12px;
+  color: #A0522D;
+  border: 1.5px solid #B8623A;
+  border-radius: 4px;
+  padding: 6px 14px;
+  letter-spacing: 4px;
+  opacity: 0.75;
+}
+
+/* ---- 目录 ---- */
+.rps-toc-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #2A2118;
+  letter-spacing: 6px;
+}
+.rps-toc-sub {
+  margin-top: 6px;
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: #B8894F;
+}
+.rps-toc-head {
+  border-bottom: 2px solid #B8894F;
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+}
+.rps-toc-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 2px;
+  border-bottom: 1px dotted #DDCEAF;
+  font-size: 13.5px;
+  color: #3A2F25;
+}
+.rps-toc-no {
+  flex: 0 0 26px;
+  color: #A06932;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  padding-top: 1px;
+}
+.rps-toc-loc {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rps-toc-pg {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: #734823;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.rps-toc-continued {
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #B3A384;
+  padding-top: 8px;
+}
+
+/* ---- 记忆区块 ---- */
+.rps-block-head {
+  border-left: 3px solid var(--rps-c, #8B5A2B);
+  padding-left: 11px;
+}
+.rps-block-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.rps-block-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #2A2118;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.rps-title-more {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: #A06932;
+  background: #E9D7BE;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  align-self: center;
+}
+.rps-block-source {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #6F5F4C;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rps-block-meta {
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: #8A7A63;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  line-height: 1.7;
+}
+.rps-block-meta span {
+  white-space: nowrap;
+}
+.rps-block-meta .rps-dot {
+  margin: 0 7px;
+  color: #CBB993;
+}
+
+.rps-cont-hd {
+  font-size: 10.5px;
+  color: #A06932;
+  letter-spacing: 1px;
+  border-bottom: 1px solid #EDE3CC;
+  padding-bottom: 6px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rps-body {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: #3A2F25;
+  text-align: justify;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.rps-body.rps-body-empty {
+  color: #A99880;
+  font-size: 12px;
+}
+
+.rps-next-mark {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  color: #A06932;
+  white-space: nowrap;
+  padding-top: 4px;
+}
+.rps-next-mark::before {
+  content: '';
+  width: 26px;
+  border-top: 1px solid #D4B487;
+}
+
+/* ============================================================
+ * 打印：仅输出报告纸张，A4 固定页宽页高，每页一整张
+ * ============================================================ */
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+  html, body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* 印刷台打开时：隐藏正常应用与所有不打印元素 */
+  body.printing-shop #root,
+  body.printing-shop .rps-noprint,
+  body.printing-shop .rps-measure,
+  body.printing-shop .rps-measure-root {
+    display: none !important;
+  }
+  /* 逐层展平全屏遮罩与预览外壳，直到只剩一张张 A4 纸 */
+  body.printing-shop .rps-overlay,
+  body.printing-shop .rps-overlay-inner,
+  body.printing-shop .rps-body-grid,
+  body.printing-shop .rps-preview-scroll,
+  body.printing-shop .rps-preview-inner {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    background: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+  }
+  body.printing-shop .rps-paper-slot {
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+  }
+  body.printing-shop .rps-page-scale {
+    transform: none !important;
+  }
+  body.printing-shop .rps-paper {
+    width: 210mm !important;
+    height: 297mm !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    break-after: page;
+    page-break-after: always;
+  }
+  body.printing-shop .rps-paper:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}

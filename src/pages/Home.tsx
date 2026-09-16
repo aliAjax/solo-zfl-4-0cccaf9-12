@@ -9,7 +9,8 @@ import type { Filters } from '../utils/helpers';
 import { filterMemories } from '../utils/helpers';
 import type { SmellMemory } from '../utils/constants';
 import type { MemoryInput } from '../store/memoryStore';
-import { BookOpenCheck } from 'lucide-react';
+import { BookOpenCheck, Newspaper } from 'lucide-react';
+import PrintingShop from '../print/PrintingShop';
 
 const defaultFilters: Filters = {
   smellType: '',
@@ -23,6 +24,7 @@ export default function Home() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<SmellMemory | null>(null);
+  const [shopOpen, setShopOpen] = useState(false);
 
   useEffect(() => {
     initIfEmpty();
@@ -81,14 +83,23 @@ export default function Home() {
         <VisualizationPanel memories={filteredMemories} onSelect={scrollToCard} />
 
         <section className="mt-2">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <h2 className="font-hand text-2xl text-ochre-600 flex items-center gap-2">
               <BookOpenCheck className="w-5 h-5" />
               气味档案
             </h2>
-            <span className="text-xs text-ink-700/50">
-              点击卡片展开完整回忆
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-ink-700/50 hidden sm:inline">
+                点击卡片展开完整回忆
+              </span>
+              <button
+                onClick={() => setShopOpen(true)}
+                className="inline-flex items-center gap-1.5 bg-moss-100 hover:bg-moss-200/70 text-moss-600 border border-moss-200 font-medium rounded-xl px-4 py-2 text-sm transition-all duration-200 hover:-translate-y-0.5 shadow-paper"
+              >
+                <Newspaper className="w-4 h-4" />
+                上印刷台
+              </button>
+            </div>
           </div>
 
           {filteredMemories.length === 0 ? (
@@ -143,6 +154,12 @@ export default function Home() {
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}
         editingData={editing}
+      />
+
+      <PrintingShop
+        open={shopOpen}
+        onClose={() => setShopOpen(false)}
+        memories={memories}
       />
     </div>
   );
