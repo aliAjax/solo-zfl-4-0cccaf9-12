@@ -67,6 +67,11 @@ const PAR_GAP = 8;
 const HEAD_BODY_GAP = 10;
 const TITLE_MAX_CHARS = 40;
 const EMPTY_TEXT = '（这段记忆没有写下正文）';
+/**
+ * 每页底部预留的安全余量（px）：吸收“离屏测量取整”与“纸张内实际渲染”
+ * 之间的亚像素舍入差，保证任何内容都不会越出版心。
+ */
+const OVERFLOW_GUARD = 2;
 
 // =================================================================
 // 稳定排序与文本工具
@@ -108,6 +113,47 @@ function humidityLabel(h: number): string {
 // =================================================================
 // 测量舞台
 // =================================================================
+
+/**
+ * 排版前等待版面真正使用的字体就绪。
+ * 关键点：离屏测量与纸张渲染必须用“同一套”字体度量，否则首次进入（webfont
+ * 尚未加载，用后备字体量）与字体就绪后（用 Noto 渲染）会得到不同的换行/行高，
+ * 造成切分位置漂移、页底溢出。这里统一 gate 到字体就绪；超时则等一个
+ * document.fonts.ready，离线时大家都回落到同一后备字体，结果仍然确定。
+ */
+let fontsReadyPromise: Promise<void> | null = null;
+function ensureReportFonts(): Promise<void> {
+  if (typeof document === 'undefined' || !('fonts' in document)) return Promise.resolve();
+  // 全局只等一次：字体加载完成（或离线超时回落后备字体）后，
+  // 文档内所有后续度量都建立在同一套字体上，结果确定。
+  if (fontsReadyPromise) return fontsReadyPromise;
+
+  fontsReadyPromise = (async () => {
+    const faces: { font: string; text?: string }[] = [
+      { font: '400 13.5px "Noto Serif SC"', text: '气味记忆正文混排 Ag0123，。：…—·' },
+      { font: '700 17px "Noto Serif SC"', text: '气味记忆标题地点 Ag0123，。…' },
+      { font: '700 40px "Noto Serif SC"', text: '气味记忆报告' },
+      { font: '400 10.5px "Noto Serif SC"', text: '承上页续下页目录 Ag0123' },
+    ];
+    try {
+      const tasks = faces.map((f) => {
+        const p = document.fonts.load(f.font, f.text);
+        return Promise.race([
+          p.catch(() => undefined),
+          new Promise((r) => window.setTimeout(r, 2500)),
+        ]);
+      });
+      await Promise.all(tasks);
+      await Promise.race([
+        document.fonts.ready.then(() => undefined),
+        new Promise((r) => window.setTimeout(r, 2500)),
+      ]);
+    } catch {
+      /* 字体不可用时统一使用后备字体，仍然确定 */
+    }
+  })();
+  return fontsReadyPromise;
+}
 
 interface Stage {
   root: HTMLElement;
@@ -407,9 +453,12 @@ function layBody(stage: Stage, memories: SmellMemory[]): BodyLayout {
     return { pages: bodyPages, bodyStartByIndex };
   }
 
+  // 一页正文的高度上限：版心高减去底部安全余量，吸收离屏测量与纸张内
+  // 实际渲染之间的亚像素舍入差，保证任何内容都不越出版心。
+  const limit = contentH - OVERFLOW_GUARD;
+
   for (let mi = 0; mi < memories.length; mi++) {
     const m = memories[mi];
-    bodyStartByIndex[mi] = bodyPages.length;
 
     // —— 块头（标题单行收起） ——
     const titleFit = fitLocationTitle(stage, m.location);
@@ -418,7 +467,11 @@ function layBody(stage: Stage, memories: SmellMemory[]): BodyLayout {
 
     // 原子块：当前页放不下“块间隔 + 块头 + 头身间隔 + 一行正文”时整块移到次页
     const needHead = (used > 0 ? BLOCK_GAP : 0) + headH + HEAD_BODY_GAP + oneLineH;
-    if (used > 0 && used + needHead > contentH) flush();
+    if (used > 0 && used + needHead > limit) flush();
+
+    // 起始页必须在块头换页判定“之后”记录：块头可能因页底放不下被挪到
+    // 次页，目录要指向块头实际所在页，否则跨页后每个正文页第一条会少一页。
+    bodyStartByIndex[mi] = bodyPages.length;
 
     if (used > 0) appendGap(BLOCK_GAP);
     append(head, headH);
@@ -433,7 +486,7 @@ function layBody(stage: Stage, memories: SmellMemory[]): BodyLayout {
       let remaining = rawParas[pi].length === 0 ? ' ' : rawParas[pi];
       for (;;) {
         const contH = carried ? stage.contHeadH : 0;
-        const avail = contentH - used - contH;
+        const avail = limit - used - contH;
 
         // 先尝试整段放进剩余高度（不预留续页标记）
         let fit = fitBodyChunk(stage, remaining, avail, isEmpty);
@@ -456,7 +509,7 @@ function layBody(stage: Stage, memories: SmellMemory[]): BodyLayout {
 
         // 段间距：同一块内非首段、且非切页进入时才加；放不下则先换页
         if (pi > 0 && !carried) {
-          if (used + PAR_GAP + fit.height > contentH) {
+          if (used + PAR_GAP + fit.height > limit) {
             flush();
             carried = true;
             continue;
@@ -547,6 +600,7 @@ function buildTocHead(): HTMLElement {
  */
 function layToc(stage: Stage, toc: TocEntry[]): { pages: HTMLElement[]; count: number } {
   const { contentH } = stage.geom;
+  const limit = contentH - OVERFLOW_GUARD;
   const headH = measureEl(stage, buildTocHead());
   const contMarkH = measureEl(stage, (() => {
     const c = document.createElement('div');
@@ -583,7 +637,7 @@ function layToc(stage: Stage, toc: TocEntry[]): { pages: HTMLElement[]; count: n
   for (const e of toc) {
     const row = buildTocRow(e.index, e.memoryId, e.location, e.startPage);
     const h = measureEl(stage, row);
-    if (rowsInPage > 0 && used + h + contMarkH > contentH) {
+    if (rowsInPage > 0 && used + h + contMarkH > limit) {
       flushPage();
     }
     page.appendChild(row);
@@ -656,9 +710,12 @@ function fnv1a(s: string): string {
 // 入口：composeReport
 // =================================================================
 
-export function composeReport(opts: ComposeOptions): ComposedReport {
+export async function composeReport(opts: ComposeOptions): Promise<ComposedReport> {
   const title = truncateReportTitle(opts.title);
   const memories = sortMemoriesForReport(opts.memories);
+
+  // 先等字体就绪再测量，保证离屏测量与纸张渲染同一套字体度量
+  await ensureReportFonts();
 
   const stage = createStage();
   try {
@@ -737,10 +794,14 @@ export function reportToStandaloneHtml(report: ComposedReport, title: string): s
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${escapeHtml(truncateReportTitle(title))} · 气味档案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 ${reportCssText}
-body { margin:0; background:#EDE3CC; }
+body { margin:0; background:#EDE3CC; font-family: "Noto Serif SC","Songti SC","SimSun","STSong",serif; }
 .rps-paper { margin: 0 auto 10px; }
 @media print {
   @page { size: A4; margin: 0; }

@@ -54,10 +54,24 @@ async function newPage() {
   return page;
 }
 
-async function openShop(page) {
+async function openShop(page, { expectEmpty = false } = {}) {
   await page.getByRole('button', { name: /上印刷台/ }).click();
-  await page.waitForSelector('.rps-paper, .rps-overlay .flex.flex-col.items-center.justify-center', { timeout: 8000 });
-  await page.waitForTimeout(400); // 等防抖排版
+  if (expectEmpty) {
+    // 空档案 / 主动清空选择：等空态连续稳定两拍（跳过开台瞬态）
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.rps-preview-scroll');
+      return el && (el.dataset.rpsState === 'empty-archive' || el.dataset.rpsState === 'empty-selection');
+    }, { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.rps-preview-scroll');
+      return el && (el.dataset.rpsState === 'empty-archive' || el.dataset.rpsState === 'empty-selection');
+    }, { timeout: 3000 }).catch(() => {});
+    return;
+  }
+  // 有待排版内容：只认真正的纸张终态，绝不被开台首帧的空态骗过
+  await page.waitForSelector('.rps-paper', { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelector('.rps-preview-scroll')?.dataset.rpsState === 'done',
+    { timeout: 20000 });
 }
 
 async function paperData(page) {
@@ -119,8 +133,7 @@ console.log('\n[1] 空档案（在 UI 中删光所有记忆）');
   const homeTxt = await page.locator('main').innerText();
   check('删光后首页出现空档案文案', /还没有封存任何气味/.test(homeTxt), homeTxt.slice(0, 60));
 
-  await page.getByRole('button', { name: /上印刷台/ }).click();
-  await page.waitForTimeout(500);
+  await openShop(page, { expectEmpty: true });
   const txt = await page.locator('.rps-preview-scroll').innerText();
   check('空档案给出明确空态', /档案是空的|还没有/.test(txt), txt.slice(0, 80));
   const printDisabled = await page.locator('.rps-toolbar-layer').getByRole('button', { name: /直接打印/ }).isDisabled();
@@ -178,6 +191,80 @@ console.log('\n[3] 超长正文：续页标记、块不拆、不溢出');
   // 页脚总页数一致
   check('页脚总页数正确', data.every((d) => d.footer?.endsWith(`/${data.length}—`)), data.map((d) => d.footer).join(' | '));
   await page.screenshot({ path: path.join(OUT, 'long-body.png'), fullPage: true });
+  await page.close();
+}
+
+// =====================================================================
+console.log('\n[3b] 三处回归：九条跨页起始页 / 400字拉丁串不溢出 / 刷新后一致');
+{
+  const page = await newPage();
+  const latin = 'supercalifragilisticexpialidocious'.repeat(20).slice(0, 400);
+  const mixed = (cn, en, n) => { let s = ''; for (let i = 0; i < n; i++) s += cn + en; return s; };
+  const mk = (i, text, loc) => mem({
+    id: 'k' + (i + 1),
+    location: loc || `地点编号${i + 1}号房间`,
+    created_at: `2026-05-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
+    memory_text: text,
+  });
+  const memories = [
+    mk(0, '短短一段，关于衣柜的记忆。'.repeat(2)),
+    mk(1, '樟木与旧毛衣的气味'.repeat(60)),
+    mk(2, '前缀一句关于旧房间的话。' + latin, '拉丁长串所在地'),
+    mk(3, '雨后泥土的味道，让人想起操场。'.repeat(90)),
+    mk(4, '中药铺里苦涩回甘的空气。'.repeat(40)),
+    mk(5, '图书馆旧纸张与油墨'.repeat(130)),
+    mk(6, mixed('海边咸湿的风裹着防晒油 ', 'The scent of salt and sunscreen lingered all afternoon. ', 20)),
+    mk(7, '厨房翻炒辣椒的呛香。'.repeat(70)),
+    mk(8, '最后一条，关于告别与重逢。'.repeat(110)),
+  ];
+  await seed(page, memories);
+  await page.goto(BASE);
+  await openShop(page);
+
+  // 等字体就绪后的重排完成
+  await page.waitForTimeout(500);
+  const latinLen = await page.evaluate((s) => Array.from(s).length, latin);
+  check('拉丁串确为 400 字无空格', latinLen === 400 && !/\s/.test(latin), `len=${latinLen}`);
+
+  const data = await paperData(page);
+  const bodyPages = data.filter((d) => d.page >= 3);
+  check('九条记忆跨多个正文页', bodyPages.length >= 4, `正文页 ${bodyPages.length}`);
+
+  // 每条目录起始页 = 块头实际首次出现页
+  const starts = {};
+  data.forEach((d) => d.heads.forEach((id) => { if (!(id in starts)) starts[id] = d.page; }));
+  const toc = data.flatMap((d) => d.toc);
+  const misaligned = toc.filter((t) => t.pg !== `P.${starts[t.id]}`);
+  check('九条记忆目录起始页全部与实际所在页一致', misaligned.length === 0,
+    misaligned.map((t) => `${t.id}:${t.pg}≠P.${starts[t.id]}`).join(' '));
+
+  // 拉丁串所在页：版心与每个正文段都不越界（水平也不溢出）
+  const noOverflow = data.every((d) => d.overflow.sh <= d.overflow.ch && d.overflow.sw <= d.overflow.cw);
+  check('含400字无空格拉丁串的所有页不越出版心', noOverflow,
+    data.map((d) => `p${d.page}:${d.overflow.sh}/${d.overflow.ch},${d.overflow.sw}/${d.overflow.cw}`).join(' '));
+  const paraOverflowPerPaper = await page.$$eval('.rps-paper', (papers) => papers.map((p) =>
+    [...p.querySelectorAll('.rps-body')].filter((el) => el.scrollWidth > el.clientWidth + 1).length));
+  const paraOverflow = paraOverflowPerPaper.reduce((a, b) => a + b, 0);
+  check('没有任何正文段落水平溢出栏宽', paraOverflow === 0, `每页溢出段数 [${paraOverflowPerPaper}]`);
+
+  // 记录第一次完整版面指纹
+  const sig1 = await page.$$eval('.rps-paper', (papers) => papers.map((p) =>
+    p.querySelector('.rps-content').innerHTML));
+  const toc1 = toc.map((t) => `${t.id}:${t.pg}`).join(',');
+
+  // 整页刷新，重开印刷台，再取指纹
+  await page.reload();
+  await page.waitForSelector('article');
+  await openShop(page);
+  await page.waitForTimeout(500);
+  const data2 = await paperData(page);
+  const sig2 = await page.$$eval('.rps-paper', (papers) => papers.map((p) =>
+    p.querySelector('.rps-content').innerHTML));
+  const toc2 = data2.flatMap((d) => d.toc).map((t) => `${t.id}:${t.pg}`).join(',');
+
+  check('刷新后总页数一致', data.length === data2.length, `${data.length} vs ${data2.length}`);
+  check('刷新后每页正文 DOM 完全一致', JSON.stringify(sig1) === JSON.stringify(sig2));
+  check('刷新后目录页码完全一致', toc1 === toc2, `${toc1}  ||  ${toc2}`);
   await page.close();
 }
 

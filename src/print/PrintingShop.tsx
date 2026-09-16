@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X, Printer, FileDown, RotateCw, CheckSquare, Square, Loader2,
@@ -51,11 +51,13 @@ export default function PrintingShop({ open, onClose, memories }: Props) {
   );
   const [scale, setScale] = useState(0.6);
 
-  // 打开时默认全选当前记忆
-  useEffect(() => {
+  // 打开时默认全选当前记忆（用 layout effect：在排版 passive effect 之前
+  // 完成，避免先以空选择进入 empty-selection 的瞬态）
+  useLayoutEffect(() => {
     if (!open) return;
     setSelected(new Set(ordered.map((m) => m.id)));
     setTitle('气味记忆报告');
+    setStatus(ordered.length === 0 ? { kind: 'empty-archive' } : { kind: 'composing' });
   }, [open, ordered]);
 
   // 键盘 ESC 关闭
@@ -71,8 +73,9 @@ export default function PrintingShop({ open, onClose, memories }: Props) {
     [ordered, selected],
   );
 
-  // ---- 排版（两遍） ----
+  // ---- 排版（两遍；排版前等待字体就绪） ----
   const composeTimer = useRef<number | null>(null);
+  const composeGen = useRef(0);
   const compose = useCallback(
     (memList: SmellMemory[], reportTitle: string) => {
       if (memList.length === 0) {
@@ -80,16 +83,22 @@ export default function PrintingShop({ open, onClose, memories }: Props) {
         return;
       }
       setStatus({ kind: 'composing' });
-      // 下一帧再排，让 composing 态先渲染
+      const gen = ++composeGen.current;
+      // 下一帧再排，让 composing 态先渲染；composeReport 内部会等 webfont
       requestAnimationFrame(() => {
-        const report = composeReport({ title: reportTitle, memories: memList });
-        setStatus({ kind: 'done', report, fingerprint: report.fingerprint });
+        void composeReport({ title: reportTitle, memories: memList }).then((report) => {
+          // 期间又触发了更新排版则丢弃旧结果
+          if (gen !== composeGen.current) return;
+          setStatus({ kind: 'done', report, fingerprint: report.fingerprint });
+        });
       });
     },
     [],
   );
 
-  // 选中或标题变化后自动重新排版（防抖），保证预览始终对应当前输入
+  // 选中或标题变化后自动重新排版（防抖），保证预览始终对应当前输入。
+  // 字体确定性由 composeReport 内部的全局 gate 保证（同环境只等一次，
+  // 在线用 Noto、离线统一回落后备字体），首开与刷新路径完全相同。
   useEffect(() => {
     if (!open) return;
     if (ordered.length === 0) {
@@ -299,6 +308,7 @@ export default function PrintingShop({ open, onClose, memories }: Props) {
           <section>
             <div
               ref={scrollRef}
+              data-rps-state={status.kind}
               className="rps-preview-scroll rounded-2xl border border-paper-300 shadow-inner overflow-auto"
               style={{ background: '#5C5346', minHeight: '70vh' }}
             >
